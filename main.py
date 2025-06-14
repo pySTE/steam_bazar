@@ -8,6 +8,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile
+from aiogram.types import ReplyKeyboardRemove
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 logging.basicConfig(
@@ -157,6 +158,126 @@ class AddBalanceState(StatesGroup):
 
 class SupportState(StatesGroup):
     message = State()
+
+
+class AddGameStates(StatesGroup):
+    waiting_for_genre = State()
+    waiting_for_title = State()
+    waiting_for_price = State()
+    waiting_for_login = State()
+    waiting_for_password = State()
+
+
+@dp.message(Command("add_game"))
+async def add_game_command(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_USER_ID:
+        await message.answer("⛔ У вас нет прав для выполнения этой команды")
+        return
+
+    cursor.execute("SELECT DISTINCT genre FROM games")
+    genres = [genre[0] for genre in cursor.fetchall()]
+
+    builder = InlineKeyboardBuilder()
+    for genre in genres:
+        builder.add(InlineKeyboardButton(text=genre, callback_data=f"add_genre_{genre}"))
+    builder.add(InlineKeyboardButton(text="➕ Новый жанр", callback_data="add_new_genre"))
+    builder.add(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_add_game"))
+    builder.adjust(2)
+
+    await message.answer(
+        "🎮 Добавление новой игры\n\n"
+        "Выберите жанр игры:",
+        reply_markup=builder.as_markup()
+    )
+    await state.set_state(AddGameStates.waiting_for_genre)
+
+
+@dp.callback_query(F.data.startswith("add_genre_"))
+async def genre_selected_for_add(callback: types.CallbackQuery, state: FSMContext):
+    genre = callback.data.split("_")[2]
+    await state.update_data(genre=genre)
+    await callback.message.edit_text(f"Выбран жанр: {genre}\n\nВведите название игры:")
+    await state.set_state(AddGameStates.waiting_for_title)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "add_new_genre")
+async def new_genre_selected(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("Введите название нового жанра:")
+    await state.set_state(AddGameStates.waiting_for_genre)
+    await callback.answer()
+
+
+@dp.message(AddGameStates.waiting_for_genre)
+async def new_genre_received(message: types.Message, state: FSMContext):
+    genre = message.text.strip()
+    await state.update_data(genre=genre)
+    await message.answer(f"Новый жанр: {genre}\n\nВведите название игры:", reply_markup=ReplyKeyboardRemove())
+    await state.set_state(AddGameStates.waiting_for_title)
+
+
+@dp.message(AddGameStates.waiting_for_title)
+async def game_title_received(message: types.Message, state: FSMContext):
+    title = message.text.strip()
+    await state.update_data(title=title)
+    await message.answer("Введите цену игры (в рублях):")
+    await state.set_state(AddGameStates.waiting_for_price)
+
+
+@dp.message(AddGameStates.waiting_for_price)
+async def game_price_received(message: types.Message, state: FSMContext):
+    try:
+        price = int(message.text)
+        if price <= 0:
+            raise ValueError
+        await state.update_data(price=price)
+        await message.answer("Введите логин для игры:")
+        await state.set_state(AddGameStates.waiting_for_login)
+    except ValueError:
+        await message.answer("❌ Пожалуйста, введите корректную цену (целое число больше 0):")
+
+
+@dp.message(AddGameStates.waiting_for_login)
+async def game_login_received(message: types.Message, state: FSMContext):
+    login = message.text.strip()
+    await state.update_data(login=login)
+    await message.answer("Введите пароль для игры:")
+    await state.set_state(AddGameStates.waiting_for_password)
+
+
+@dp.message(AddGameStates.waiting_for_password)
+async def game_password_received(message: types.Message, state: FSMContext):
+    password = message.text.strip()
+    data = await state.get_data()
+
+    try:
+        cursor.execute(
+            "INSERT INTO games (title, genre, login, password, price) VALUES (?, ?, ?, ?, ?)",
+            (data['title'], data['genre'], data['login'], password, data['price'])
+        )
+        conn.commit()
+
+        await message.answer(
+            f"✅ Игра успешно добавлена в базу данных!\n\n"
+            f"🎮 Название: {data['title']}\n"
+            f"📁 Жанр: {data['genre']}\n"
+            f"💵 Цена: {data['price']}₽\n"
+            f"👤 Логин: {data['login']}\n"
+            f"🔑 Пароль: {password}"
+        )
+        logger.info(f"Admin added new game: {data['title']}")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при добавлении игры: {e}")
+        logger.error(f"Error adding game: {e}")
+
+    await state.clear()
+
+
+@dp.callback_query(F.data == "cancel_add_game")
+async def cancel_add_game(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("❌ Добавление игры отменено")
+    await callback.answer()
 
 
 def get_main_menu_kb():
