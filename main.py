@@ -1,17 +1,29 @@
 import logging
+import os
 import sqlite3
+from datetime import datetime
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
-bot = Bot(token="6899662778:AAFKyYTqDUTfnvbVjmqowxqy_pDjFLFGk60")
+SUPPORT_USERNAME = "gwjeh"
+ADMIN_USER_ID = 5091594841
+
+bot = Bot(token="7785027084:AAG7xbLlmuloH5DpYipjW8UZR8_Zq8gUhR8")
 dp = Dispatcher()
 
 conn = sqlite3.connect('steam_shop.db')
@@ -22,7 +34,8 @@ def create_tables():
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
-        balance INTEGER DEFAULT 0
+        balance INTEGER DEFAULT 0,
+        username TEXT
     )
     ''')
 
@@ -47,6 +60,17 @@ def create_tables():
         FOREIGN KEY (game_id) REFERENCES games (game_id)
     )
     ''')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS support_tickets (
+        ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        status TEXT DEFAULT 'open',
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+    ''')
     conn.commit()
 
 
@@ -59,62 +83,62 @@ def populate_games_data():
 
     if count == 0:
         games_data = [
-            ("Prototype 2", "Action", "rwgran1", "wet444wed", 299),
+            ("Prototype 2", "Action", "rwgran1", "wet444wed", 199),
             ("Alan Wake", "Horror", "rwgran1", "wet444wed", 199),
             ("Paint the Town Red", "Action", "rzm745", "Rzm85770923", 149),
-            ("Grand Theft Auto IV: The Complete Edition", "Action", "rzm745", "Rzm85770923", 249),
-            ("Tropico 6", "Strategy", "liyagarcueva97", "CxvMhK9dPkUaIb", 299),
+            ("Grand Theft Auto IV: The Complete Edition", "Action", "rzm745", "Rzm85770923", 149),
+            ("Tropico 6", "Strategy", "liyagarcueva97", "CxvMhK9dPkUaIb", 199),
             ("GTA VICE CITY", "Action", "alp21cm", "10306969970aA", 99),
-            ("ELDEN RING", "RPG", "Thragg_767", "ev8Z5YyvY42RmiX", 299),
-            ("Resident Evil 4 Remake", "Horror", "bejdw24074", "https://steamkk.com", 299),
+            ("ELDEN RING", "RPG", "Thragg_767", "ev8Z5YyvY42RmiX", 199),
+            ("Resident Evil 4 Remake", "Horror", "bejdw24074", "https://steamkk.com", 199),
             ("Far cry 3", "Action", "youallsuck_911", "Adje2003a.1", 199),
-            ("BLACK MYTH: WUKONG DELUX", "Action", "mario_wukong", "QCP7PFHMW4VV", 299),
-            ("Cyberpunk 2077", "RPG", "icpropenin1988", "siski33Fh845X3BYiBLZyb1987", 299),
-            ("Resident Evil Village", "Horror", "nikintolya92", "aJMpnB9GtONAyY1Q", 249),
-            ("Far Cry 5", "Action", "dr4xon22", "ZIa_B--Z", 249),
+            ("BLACK MYTH: WUKONG DELUX", "Action", "mario_wukong", "QCP7PFHMW4VV", 199),
+            ("Cyberpunk 2077", "RPG", "icpropenin1988", "siski33Fh845X3BYiBLZyb1987", 199),
+            ("Resident Evil Village", "Horror", "nikintolya92", "aJMpnB9GtONAyY1Q", 149),
+            ("Far Cry 5", "Action", "dr4xon22", "ZIa_B--Z", 149),
             ("Assassin's Creed Chronicles India", "Adventure", "kxzoi70142", "VkY5EauB", 149),
             ("Assassin's Creed Chronicles China", "Adventure", "kxzoi70142", "VkY5EauB", 149),
             ("Assassin's Creed Chronicles Russia", "Adventure", "kxzoi70142", "VkY5EauB", 149),
-            ("Assassin's Creed Brotherhood", "Action", "kxzoi70142", "VkY5EauB", 199),
+            ("Assassin's Creed Brotherhood", "Action", "kxzoi70142", "VkY5EauB", 99),
             ("Mortal Combat X", "Fighting", "leo3d3", "tricolor231002", 199),
-            ("Lords of the Fallen Deluxe Edition", "RPG", "rkwoh77645", "uofh08187V", 249),
-            ("Call Of Duty WW2", "Shooter", "brbba2063", "che600220", 249),
+            ("Lords of the Fallen Deluxe Edition", "RPG", "rkwoh77645", "uofh08187V", 149),
+            ("Call Of Duty WW2", "Shooter", "brbba2063", "che600220", 149),
             ("Dead Cells", "Roguelike", "hsrp18939", "3HjumZTz334I", 149),
-            ("Five Nights at Freddy's Security Breach", "Horror", "nojevik__0", "wwe123456", 199),
-            ("Borderlands 3", "Shooter", "ivy_wreathh", "yT1ML3YWe3dw52x", 299),
-            ("Fallout 4", "RPG", "swfushe4", "Sw654247", 249),
+            ("Five Nights at Freddy's Security Breach", "Horror", "nojevik__0", "wwe123456", 149),
+            ("Borderlands 3", "Shooter", "ivy_wreathh", "yT1ML3YWe3dw52x", 199),
+            ("Fallout 4", "RPG", "swfushe4", "Sw654247", 149),
             ("GTA 4", "Action", "wqm322495", "ac7QPfa3", 199),
-            ("Assassin's creed 3 Remastered", "Action", "junjun888666733", "Xiaohejiaoao78965", 249),
+            ("Assassin's creed 3 Remastered", "Action", "junjun888666733", "Xiaohejiaoao78965", 149),
             ("Resident Evil 7 Biohazard", "Horror", "jocuriargenrinia", "70Games.net92", 199),
             ("cuphead", "Platformer", "su0wn1hf", "UOipTT58vG5XZ1", 149),
             ("LITTLE NIGHTMARES", "Horror", "DecorousThoughtlessWhale", "Weirdmice91", 99),
             ("maneater", "Action", "yrij69325", "xmp8eADW", 199),
             ("Alien Isolation", "Horror", "jiaoaohehe188940", "junyi1139908", 149),
             ("tomb raider", "Adventure", "KickeyGame33", "I81PJDWCAS341FA", 149),
-            ("kingdom Come: deliverance II", "RPG", "phvmg47604", "bfmjj99570", 299),
+            ("kingdom Come: deliverance II", "RPG", "phvmg47604", "bfmjj99570", 199),
             ("Call of Duty: Modern Warfare 2 (2009)", "Shooter", "dimkoxd", "Dimko1995", 199),
             ("Terraria", "Sandbox", "charizardkingg", "Ronnie-13", 99),
             ("Slime Rancher", "Simulation", "charizardkingg", "Ronnie-13", 149),
-            ("Age of Empires III: Definitive Edition", "Strategy", "komski01", "omarca06", 199),
-            ("Watch Dogs Legion", "Action", "Bt5Pd3Zm9Sz4", "Yk2Ho8Wl5Im2", 299),
+            ("Age of Empires III: Definitive Edition", "Strategy", "komski01", "omarca06", 99),
+            ("Watch Dogs Legion", "Action", "Bt5Pd3Zm9Sz4", "Yk2Ho8Wl5Im2", 199),
             ("hollow knight", "Metroidvania", "niodev", "funpay.onibist.users.5871937", 149),
-            ("Need For Speed Heat", "Racing", "rd5977", "951753852.ACHU", 249),
+            ("Need For Speed Heat", "Racing", "rd5977", "951753852.ACHU", 149),
             ("hotline miami", "Action", "keraoff", "v,!86QZSG(<e6:<", 99),
-            ("Stray", "Adventure", "wbtq1088322", "steamok4566H", 199),
+            ("Stray", "Adventure", "wbtq1088322", "steamok4566H", 99),
             ("Prototype", "Action", "axelturba3660", "monster3660", 149),
-            ("HEARTS OF IRON IV", "Strategy", "meteprotr", "3D88ASX2AMCG", 199),
-            ("Mortal Kombat 11", "Fighting", "kintygabobs1981", "XIdg5JiQZ11978", 249),
+            ("HEARTS OF IRON IV", "Strategy", "meteprotr", "3D88ASX2AMCG", 99),
+            ("Mortal Kombat 11", "Fighting", "kintygabobs1981", "XIdg5JiQZ11978", 149),
             ("Warhammer 40,000: Space Marine 2", "Action", "willianphillips7u", "mwe8p9SO4y1998", 299),
-            ("EA SPORTS FC 25", "Sports", "neifreebzapme1973", "2y6rS0eJ6v2000", 299),
-            ("Metro exodus", "Shooter", "chriswest6k", "xgfb9z5s", 249),
+            ("EA SPORTS FC 25", "Sports", "neifreebzapme1973", "2y6rS0eJ6v2000", 199),
+            ("Metro exodus", "Shooter", "chriswest6k", "xgfb9z5s", 149),
             ("Metro last light redux", "Shooter", "chriswest6k", "xgfb9z5s", 149),
             ("metro 2033 redux", "Shooter", "chriswest6k", "xgfb9z5s", 149),
-            ("resident evil 2", "Horror", "lthNoviokv1", "hxrTV21zqgpkRuAnTAY0", 249),
-            ("frostpunk 2", "Strategy", "lkzra09777", "siski33FpndvDpZ066475", 299),
-            ("Dead Island 2", "Action", "cbkse74345", "siski33BYkJWT6HiZM7lhirtXsk", 299),
-            ("God of war", "Action", "jmyhtrPtaosv1", "siski33hkFpEiHgWvccQV", 299),
+            ("resident evil 2", "Horror", "lthNoviokv1", "hxrTV21zqgpkRuAnTAY0", 149),
+            ("frostpunk 2", "Strategy", "lkzra09777", "siski33FpndvDpZ066475", 199),
+            ("Dead Island 2", "Action", "cbkse74345", "siski33BYkJWT6HiZM7lhirtXsk", 199),
+            ("God of war", "Action", "jmyhtrPtaosv1", "siski33hkFpEiHgWvccQV", 199),
             ("spider man remastered", "Action", "josephlighting98", "STEAM_ACCOUNT_64DVFndjei397421", 299),
-            ("the last of us part 1", "Adventure", "tijodeme1978", "v0329fETm71987", 299)
+            ("the last of us part 1", "Adventure", "tijodeme1978", "v0329fETm71987", 199)
         ]
 
         cursor.executemany(
@@ -131,15 +155,30 @@ class AddBalanceState(StatesGroup):
     amount = State()
 
 
+class SupportState(StatesGroup):
+    message = State()
+
+
 def get_main_menu_kb():
     builder = InlineKeyboardBuilder()
     builder.add(
         InlineKeyboardButton(text="🕹️ Каталог игр", callback_data="catalog"),
         InlineKeyboardButton(text="🛒 Корзина", callback_data="cart"),
         InlineKeyboardButton(text="💰 Баланс", callback_data="balance"),
-        InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_balance")
+        InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_balance"),
+        InlineKeyboardButton(text="🆘 Техподдержка", callback_data="support"),
     )
-    builder.adjust(2)
+    builder.adjust(2, 2, 1)
+    return builder.as_markup()
+
+
+def get_support_kb():
+    builder = InlineKeyboardBuilder()
+    builder.add(
+        InlineKeyboardButton(text="Написать в поддержку", callback_data="write_to_support"),
+        InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")
+    )
+    builder.adjust(1)
     return builder.as_markup()
 
 
@@ -224,15 +263,78 @@ def get_balance_kb():
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
+    username = message.from_user.username
 
-    cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+    cursor.execute(
+        "INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)",
+        (user_id, username)
+    )
     conn.commit()
+
+    logger.info(f"User {user_id} (@{username}) started the bot")
 
     await message.answer(
         "🎮 Добро пожаловать в магазин Steam игр!\n\n"
         "Здесь вы можете купить игры для Steam по выгодным ценам.",
         reply_markup=get_main_menu_kb()
     )
+
+
+@dp.callback_query(F.data == "support")
+async def support(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "🆘 Техническая поддержка\n\n"
+        f"Если у вас возникли проблемы, вы можете:\n"
+        f"1. Написать нам в поддержку через бота\n"
+        f"2. Связаться напрямую: @{SUPPORT_USERNAME}",
+        reply_markup=get_support_kb()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "write_to_support")
+async def write_to_support(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "✉️ Опишите вашу проблему, и мы постараемся помочь как можно скорее:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🔙 Отмена", callback_data="support")
+        ]])
+    )
+    await state.set_state(SupportState.message)
+    await callback.answer()
+
+
+@dp.message(SupportState.message)
+async def process_support_message(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    support_message = message.text
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    cursor.execute(
+        "INSERT INTO support_tickets (user_id, message, created_at) VALUES (?, ?, ?)",
+        (user_id, support_message, created_at)
+    )
+    conn.commit()
+
+    logger.info(f"New support ticket from user {user_id}: {support_message}")
+
+    try:
+        await bot.send_message(
+            ADMIN_USER_ID,
+            f"🆘 Новый запрос в поддержку\n\n"
+            f"👤 Пользователь: @{message.from_user.username or 'нет username'}\n"
+            f"🆔 ID: tg://user?id={user_id} - {user_id}\n"
+            f"📝 Сообщение:\n{support_message}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to send support message to admin: {e}")
+
+    await message.answer(
+        "✅ Ваше сообщение отправлено в поддержку. Мы ответим вам в ближайшее время.\n"
+        f"Вы также можете связаться напрямую: @{SUPPORT_USERNAME}",
+        reply_markup=get_main_menu_kb()
+    )
+    await state.clear()
 
 
 @dp.callback_query(F.data == "main_menu")
@@ -483,6 +585,35 @@ async def process_balance_amount(message: types.Message, state: FSMContext):
         reply_markup=get_main_menu_kb()
     )
     await state.clear()
+
+
+@dp.message(Command("logs"))
+async def send_logs(message: types.Message):
+    if message.from_user.id != ADMIN_USER_ID:
+        logger.warning(f"User {message.from_user.id} tried to access logs")
+        await message.answer("⛔ У вас нет прав для выполнения этой команды")
+        return
+
+    try:
+        if not os.path.exists('bot.log') or os.path.getsize('bot.log') == 0:
+            await message.answer("📭 Файл логов пуст или не существует")
+            return
+
+        log_file = FSInputFile('bot.log')
+        await message.answer_document(
+            document=log_file,
+            caption=f"📋 Лог-файл бота\n🕒 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
+        with open('bot.log', 'w', encoding='utf-8') as f:
+            f.write('')
+
+        logger.info("Logs sent to admin and file cleared")
+        await message.answer("✅ Логи успешно отправлены и файл очищен")
+
+    except Exception as e:
+        logger.error(f"Error sending logs: {e}")
+        await message.answer(f"❌ Ошибка при отправке логов: {e}")
 
 
 async def main():
