@@ -22,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 SUPPORT_USERNAME = "gwjeh"
-ADMIN_USER_ID = 5091594841
+ADMIN_USER_ID = [5091594841, 5142322536]
 
 bot = Bot(token="7785027084:AAG7xbLlmuloH5DpYipjW8UZR8_Zq8gUhR8")
 dp = Dispatcher()
@@ -170,7 +170,7 @@ class AddGameStates(StatesGroup):
 
 @dp.message(Command("add_game"))
 async def add_game_command(message: types.Message, state: FSMContext):
-    if message.from_user.id != ADMIN_USER_ID:
+    if message.from_user.id not in ADMIN_USER_ID:
         await message.answer("⛔ У вас нет прав для выполнения этой команды")
         return
 
@@ -327,16 +327,80 @@ def get_games_by_genre_kb(genre):
     return builder.as_markup()
 
 
-def get_game_details_kb(game_id, in_cart=False):
+def get_game_details_kb(game_id, in_cart=False, is_admin=False):
     builder = InlineKeyboardBuilder()
     if not in_cart:
         builder.add(InlineKeyboardButton(text="🛒 Добавить в корзину", callback_data=f"add_to_cart_{game_id}"))
     else:
         builder.add(InlineKeyboardButton(text="❌ Удалить из корзины", callback_data=f"remove_from_cart_{game_id}"))
+
+    if is_admin:
+        builder.add(InlineKeyboardButton(text="🗑️ Удалить игру", callback_data=f"admin_delete_game_{game_id}"))
+
     builder.add(InlineKeyboardButton(text="🔙 Назад",
                                      callback_data=f"genre_{cursor.execute('SELECT genre FROM games WHERE game_id = ?', (game_id,)).fetchone()[0]}"))
     builder.adjust(1)
     return builder.as_markup()
+
+
+@dp.callback_query(F.data.startswith("admin_delete_game_"))
+async def admin_delete_game(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMIN_USER_ID:
+        await callback.answer("⛔ У вас нет прав для выполнения этого действия")
+        return
+
+    game_id = int(callback.data.split("_")[3])
+
+    cursor.execute("SELECT title FROM games WHERE game_id = ?", (game_id,))
+    game_title = cursor.fetchone()[0]
+
+    try:
+        cursor.execute("DELETE FROM games WHERE game_id = ?", (game_id,))
+        cursor.execute("DELETE FROM cart WHERE game_id = ?", (game_id,))
+        conn.commit()
+
+        await callback.message.edit_text(
+            f"✅ Игра '{game_title}' успешно удалена из базы данных",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🔙 В каталог", callback_data="catalog")
+            ]])
+        )
+        logger.info(f"Admin deleted game: {game_title}")
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка при удалении игры: {e}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🔙 Назад", callback_data=f"game_{game_id}")
+            ]])
+        )
+        logger.error(f"Error deleting game: {e}")
+
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("game_"))
+async def game_selected(callback: types.CallbackQuery):
+    game_id = int(callback.data.split("_")[1])
+    cursor.execute("SELECT title, genre, price FROM games WHERE game_id = ?", (game_id,))
+    game = cursor.fetchone()
+
+    cursor.execute("SELECT 1 FROM cart WHERE user_id = ? AND game_id = ?", (callback.from_user.id, game_id))
+    in_cart = bool(cursor.fetchone())
+
+    text = (
+        f"🎮 <b>{game[0]}</b>\n\n"
+        f"📝 Жанр: <i>{game[1]}</i>\n\n"
+        f"💵 Цена: <b>{game[2]}₽</b>"
+    )
+
+    is_admin = callback.from_user.id in ADMIN_USER_ID
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_game_details_kb(game_id, in_cart, is_admin),
+        parse_mode='HTML'
+    )
+    await callback.answer()
 
 
 def get_cart_kb(user_id):
@@ -440,13 +504,14 @@ async def process_support_message(message: types.Message, state: FSMContext):
     logger.info(f"New support ticket from user {user_id}: {support_message}")
 
     try:
-        await bot.send_message(
-            ADMIN_USER_ID,
-            f"🆘 Новый запрос в поддержку\n\n"
-            f"👤 Пользователь: @{message.from_user.username or 'нет username'}\n"
-            f"🆔 ID: tg://user?id={user_id} - {user_id}\n"
-            f"📝 Сообщение:\n{support_message}"
-        )
+        for i in ADMIN_USER_ID:
+            await bot.send_message(
+                i,
+                f"🆘 Новый запрос в поддержку\n\n"
+                f"👤 Пользователь: @{message.from_user.username or 'нет username'}\n"
+                f"🆔 ID: tg://user?id={user_id} - {user_id}\n"
+                f"📝 Сообщение:\n{support_message}"
+            )
     except Exception as e:
         logger.error(f"Failed to send support message to admin: {e}")
 
@@ -628,8 +693,8 @@ async def buy_games(callback: types.CallbackQuery):
         new_balance = balance - total
         cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
 
-        for game in games:
-            cursor.execute("UPDATE games SET is_used = 1 WHERE game_id = ?", (game[0],))
+        # for game in games:
+        # cursor.execute("UPDATE games SET is_used = 1 WHERE game_id = ?", (game[0],))
 
         cursor.execute("DELETE FROM cart WHERE user_id = ?", (user_id,))
         conn.commit()
@@ -710,7 +775,7 @@ async def process_balance_amount(message: types.Message, state: FSMContext):
 
 @dp.message(Command("logs"))
 async def send_logs(message: types.Message):
-    if message.from_user.id != ADMIN_USER_ID:
+    if message.from_user.id not in ADMIN_USER_ID:
         logger.warning(f"User {message.from_user.id} tried to access logs")
         await message.answer("⛔ У вас нет прав для выполнения этой команды")
         return
