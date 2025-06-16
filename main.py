@@ -168,6 +168,10 @@ class AddGameStates(StatesGroup):
     waiting_for_password = State()
 
 
+class EditGameStates(StatesGroup):
+    waiting_for_new_price = State()
+
+
 @dp.message(Command("add_game"))
 async def add_game_command(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMIN_USER_ID:
@@ -335,10 +339,13 @@ def get_game_details_kb(game_id, in_cart=False, is_admin=False):
         builder.add(InlineKeyboardButton(text="❌ Удалить из корзины", callback_data=f"remove_from_cart_{game_id}"))
 
     if is_admin:
+        builder.add(InlineKeyboardButton(text="✏️ Редактировать цену", callback_data=f"edit_price_{game_id}"))
         builder.add(InlineKeyboardButton(text="🗑️ Удалить игру", callback_data=f"admin_delete_game_{game_id}"))
 
-    builder.add(InlineKeyboardButton(text="🔙 Назад",
-                                     callback_data=f"genre_{cursor.execute('SELECT genre FROM games WHERE game_id = ?', (game_id,)).fetchone()[0]}"))
+    builder.add(InlineKeyboardButton(
+        text="🔙 Назад",
+        callback_data=f"genre_{cursor.execute('SELECT genre FROM games WHERE game_id = ?', (game_id,)).fetchone()[0]}"
+    ))
     builder.adjust(1)
     return builder.as_markup()
 
@@ -350,6 +357,32 @@ async def admin_delete_game(callback: types.CallbackQuery):
         return
 
     game_id = int(callback.data.split("_")[3])
+
+    cursor.execute("SELECT title FROM games WHERE game_id = ?", (game_id,))
+    game_title = cursor.fetchone()[0]
+
+    confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"confirm_delete_{game_id}"),
+            InlineKeyboardButton(text="❌ Нет, отмена", callback_data=f"game_{game_id}")
+        ]
+    ])
+
+    await callback.message.edit_text(
+        f"⚠️ Вы уверены, что хотите удалить игру '{game_title}'?\n\n"
+        "Это действие нельзя отменить!",
+        reply_markup=confirm_kb
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("confirm_delete_"))
+async def confirm_delete_game(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMIN_USER_ID:
+        await callback.answer("⛔ У вас нет прав для выполнения этого действия")
+        return
+
+    game_id = int(callback.data.split("_")[2])
 
     cursor.execute("SELECT title FROM games WHERE game_id = ?", (game_id,))
     game_title = cursor.fetchone()[0]
@@ -378,13 +411,60 @@ async def admin_delete_game(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@dp.callback_query(F.data.startswith("game_"))
-async def game_selected(callback: types.CallbackQuery):
-    game_id = int(callback.data.split("_")[1])
+@dp.callback_query(F.data.startswith("edit_price_"))
+async def edit_price_start(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_USER_ID:
+        await callback.answer("⛔ У вас нет прав для выполнения этого действия")
+        return
+
+    game_id = int(callback.data.split("_")[2])
+    await state.update_data(game_id=game_id)
+
+    cursor.execute("SELECT title, price FROM games WHERE game_id = ?", (game_id,))
+    game = cursor.fetchone()
+
+    await callback.message.edit_text(
+        f"✏️ Редактирование цены игры:\n\n"
+        f"🎮 {game[0]}\n"
+        f"💵 Текущая цена: {game[1]}₽\n\n"
+        f"Введите новую цену:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🔙 Отмена", callback_data=f"game_{game_id}")
+        ]])
+    )
+    await state.set_state(EditGameStates.waiting_for_new_price)
+    await callback.answer()
+
+
+@dp.message(EditGameStates.waiting_for_new_price)
+async def save_new_price(message: types.Message, state: FSMContext):
+    try:
+        new_price = int(message.text)
+        if new_price <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Пожалуйста, введите корректную цену (целое число больше 0):")
+        return
+
+    data = await state.get_data()
+    game_id = data['game_id']
+
+    cursor.execute("UPDATE games SET price = ? WHERE game_id = ?", (new_price, game_id))
+    conn.commit()
+
+    cursor.execute("SELECT title FROM games WHERE game_id = ?", (game_id,))
+    game_title = cursor.fetchone()[0]
+
+    await message.answer(
+        f"✅ Цена игры '{game_title}' успешно изменена на {new_price}₽",
+        reply_markup=get_main_menu_kb()
+    )
+    await state.clear()
+
     cursor.execute("SELECT title, genre, price FROM games WHERE game_id = ?", (game_id,))
     game = cursor.fetchone()
 
-    cursor.execute("SELECT 1 FROM cart WHERE user_id = ? AND game_id = ?", (callback.from_user.id, game_id))
+    cursor.execute("SELECT 1 FROM cart WHERE user_id = ? AND game_id = ?", (message.from_user.id, game_id))
     in_cart = bool(cursor.fetchone())
 
     text = (
@@ -393,14 +473,13 @@ async def game_selected(callback: types.CallbackQuery):
         f"💵 Цена: <b>{game[2]}₽</b>"
     )
 
-    is_admin = callback.from_user.id in ADMIN_USER_ID
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_game_details_kb(game_id, in_cart, is_admin),
+    await bot.edit_message_text(
+        chat_id=message.chat.id,
+        message_id=message.message_id - 1,
+        text=text,
+        reply_markup=get_game_details_kb(game_id, in_cart, True),
         parse_mode='HTML'
     )
-    await callback.answer()
 
 
 def get_cart_kb(user_id):
@@ -566,9 +645,11 @@ async def game_selected(callback: types.CallbackQuery):
         f"💵 Цена: <b>{game[2]}₽</b>"
     )
 
+    is_admin = callback.from_user.id in ADMIN_USER_ID
+
     await callback.message.edit_text(
         text,
-        reply_markup=get_game_details_kb(game_id, in_cart),
+        reply_markup=get_game_details_kb(game_id, in_cart, is_admin),
         parse_mode='HTML'
     )
     await callback.answer()
