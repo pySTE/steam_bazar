@@ -1,8 +1,10 @@
 import logging
 import os
+import platform
 import sqlite3
 from datetime import datetime
 
+import psutil
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -26,9 +28,121 @@ ADMIN_USER_ID = [5091594841, 5142322536, 5172170861]
 
 bot = Bot(token="7785027084:AAG7xbLlmuloH5DpYipjW8UZR8_Zq8gUhR8")
 dp = Dispatcher()
+HIGH_LOAD_THRESHOLD = 80
 
 conn = sqlite3.connect('steam_shop.db')
 cursor = conn.cursor()
+
+
+def get_server_stats():  # стата сервера
+    cpu_percent = psutil.cpu_percent(interval=1)
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+    boot_time = datetime.fromtimestamp(psutil.boot_time()).strftime("%Y-%m-%d %H:%M:%S")
+
+    stats = {
+        "cpu": cpu_percent,
+        "memory": {
+            "total": memory.total,
+            "available": memory.available,
+            "used": memory.used,
+            "percent": memory.percent
+        },
+        "disk": {
+            "total": disk.total,
+            "used": disk.used,
+            "free": disk.free,
+            "percent": disk.percent
+        },
+        "boot_time": boot_time,
+        "os": platform.system(),
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+    return stats
+
+
+async def format_stats_message(stats):  # cтата сервера
+    used_mem_gb = stats['memory']['used'] / (1024 ** 3)
+    total_mem_gb = stats['memory']['total'] / (1024 ** 3)
+    free_disk_gb = stats['disk']['free'] / (1024 ** 3)
+    total_disk_gb = stats['disk']['total'] / (1024 ** 3)
+
+    message = (
+        f"📊 <b>Статистика сервера</b>\n"
+        f"⏱ <i>{stats['timestamp']}</i>\n\n"
+        f"🖥 <b>CPU:</b> {stats['cpu']}%\n"
+        f"🧠 <b>RAM:</b> {stats['memory']['percent']}% "
+        f"(Используется: {used_mem_gb:.2f} / {total_mem_gb:.2f} GB)\n"
+        f"💾 <b>Disk:</b> {stats['disk']['percent']}% "
+        f"(Свободно: {free_disk_gb:.2f} / {total_disk_gb:.2f} GB)\n"
+        f"🔄 <b>OS:</b> {stats['os']}\n"
+        f"⏳ <b>Время работы:</b> {stats['boot_time']}"
+    )
+    return message
+
+
+@dp.message(Command("status"))
+async def cmd_status(message: types.Message):
+    if message.from_user.id not in ADMIN_USER_ID:
+        await message.answer("⛔ У вас нет прав для выполнения этой команды")
+        return
+
+    stats = get_server_stats()
+    await message.answer(
+        await format_stats_message(stats),
+        parse_mode="HTML"
+    )
+
+
+async def on_startup(dispatcher):
+    for admin_id in ADMIN_USER_ID:
+        try:
+            await bot.send_message(
+                chat_id=admin_id,
+                text="🟢 <b>Бот мониторинга сервера запущен</b>",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.error(f"Failed to send startup message to admin {admin_id}: {e}")
+
+
+async def on_shutdown(dispatcher):
+    for admin_id in ADMIN_USER_ID:
+        try:
+            await bot.send_message(
+                chat_id=admin_id,
+                text="🔴 <b>Бот мониторинга сервера остановлен</b>",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.error(f"Failed to send shutdown message to admin {admin_id}: {e}")
+
+
+async def check_server_load():
+    while True:
+        stats = get_server_stats()
+
+        if (stats['cpu'] > HIGH_LOAD_THRESHOLD or
+                stats['memory']['percent'] > HIGH_LOAD_THRESHOLD or
+                stats['disk']['percent'] > HIGH_LOAD_THRESHOLD):
+
+            alert_message = (
+                "⚠️ <b>ВНИМАНИЕ: Высокая нагрузка на сервере!</b>\n\n"
+                f"{await format_stats_message(stats)}"
+            )
+
+            for admin_id in ADMIN_USER_ID:
+                try:
+                    await bot.send_message(
+                        chat_id=admin_id,
+                        text=alert_message,
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send alert to admin {admin_id}: {e}")
+
+        await asyncio.sleep(300)
 
 
 def create_tables():
@@ -884,6 +998,12 @@ async def send_logs(message: types.Message):
 
 
 async def main():
+    asyncio.create_task(check_server_load())
+
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+
+    await dp.start_polling(bot)
     await dp.start_polling(bot)
 
 
