@@ -970,8 +970,8 @@ async def add_to_cart(callback: types.CallbackQuery):
     cursor.execute("SELECT COUNT(*) FROM cart WHERE user_id = ?", (user_id,))
     cart_count = cursor.fetchone()[0]
 
-    if cart_count >= 10:
-        await callback.answer("❌ Корзина заполнена (максимум 10 игр)", show_alert=True)
+    if cart_count >= 8:
+        await callback.answer("❌ Корзина заполнена (максимум 7 игр)", show_alert=True)
         return
 
     cursor.execute("SELECT 1 FROM cart WHERE user_id = ? AND game_id = ?", (user_id, game_id))
@@ -1049,7 +1049,8 @@ async def cart_game_selected(callback: types.CallbackQuery):
 
     await callback.message.edit_text(
         text,
-        reply_markup=get_cart_game_kb(game_id)
+        reply_markup=get_cart_game_kb(game_id),
+        parse_mode='HTML'
     )
     await callback.answer()
 
