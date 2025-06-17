@@ -98,11 +98,7 @@ async def cmd_status(message: types.Message):
 async def on_startup(dispatcher):
     for admin_id in ADMIN_USER_ID:
         try:
-            await bot.send_message(
-                chat_id=admin_id,
-                text="🟢 <b>Бот мониторинга сервера запущен</b>",
-                parse_mode="HTML"
-            )
+            logger.info("Бот мониторинга сервера запущен")
         except Exception as e:
             logger.error(f"Failed to send startup message to admin {admin_id}: {e}")
 
@@ -110,11 +106,7 @@ async def on_startup(dispatcher):
 async def on_shutdown(dispatcher):
     for admin_id in ADMIN_USER_ID:
         try:
-            await bot.send_message(
-                chat_id=admin_id,
-                text="🔴 <b>Бот мониторинга сервера остановлен</b>",
-                parse_mode="HTML"
-            )
+            logger.info("Бот мониторинга сервера остановлен")
         except Exception as e:
             logger.error(f"Failed to send shutdown message to admin {admin_id}: {e}")
 
@@ -186,6 +178,12 @@ def create_tables():
         FOREIGN KEY (user_id) REFERENCES users (user_id)
         )
     ''')
+    cursor.execute('''
+       CREATE TABLE IF NOT EXISTS banned_users (
+           user_id INTEGER PRIMARY KEY,
+           banned_at TEXT NOT NULL
+       )
+       ''')
     conn.commit()
 
 
@@ -284,6 +282,84 @@ class AddGameStates(StatesGroup):
 
 class EditGameStates(StatesGroup):
     waiting_for_new_price = State()
+
+
+@dp.message(Command("ban"))  # баним
+async def ban_user(message: types.Message):
+    if message.from_user.id not in ADMIN_USER_ID:
+        await message.answer("⛔ У вас нет прав для выполнения этой команды")
+        return
+
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            await message.answer("ℹ️ Использование: /ban <user_id>")
+            return
+
+        user_id = int(args[1])
+        banned_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        cursor.execute("SELECT 1 FROM banned_users WHERE user_id = ?", (user_id,))
+        if cursor.fetchone():
+            await message.answer(f"⚠️ Пользователь {user_id} уже забанен")
+            return
+
+        cursor.execute(
+            "INSERT INTO banned_users (user_id, banned_at) VALUES (?, ?)",
+            (user_id, banned_at)
+        )
+        conn.commit()
+
+        cursor.execute("DELETE FROM cart WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+        await message.answer(f"✅ Пользователь {user_id} успешно забанен")
+        logger.info(f"Admin banned user: {user_id}")
+
+        try:
+            await bot.send_message(
+                user_id,
+                "⛔ Вы были заблокированы в этом боте. "
+                "По всем вопросам обращайтесь в поддержку."
+            )
+        except Exception as e:
+            logger.error(f"Could not send ban notification to {user_id}: {e}")
+
+    except ValueError:
+        await message.answer("❌ Неверный формат ID пользователя")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при бане пользователя: {e}")
+        logger.error(f"Error banning user: {e}")
+
+
+@dp.message(Command("unban")) #разбан
+async def unban_user(message: types.Message):
+    if message.from_user.id not in ADMIN_USER_ID:
+        await message.answer("⛔ У вас нет прав для выполнения этой команды")
+        return
+
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            await message.answer("ℹ️ Использование: /unban <user_id>")
+            return
+
+        user_id = int(args[1])
+
+        cursor.execute("DELETE FROM banned_users WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+        if cursor.rowcount > 0:
+            await message.answer(f"✅ Пользователь {user_id} разбанен")
+            logger.info(f"Admin unbanned user: {user_id}")
+        else:
+            await message.answer(f"ℹ️ Пользователь {user_id} не был забанен")
+
+    except ValueError:
+        await message.answer("❌ Неверный формат ID пользователя")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при разбане пользователя: {e}")
+        logger.error(f"Error unbanning user: {e}")
 
 
 @dp.message(Command("add_game"))
@@ -642,6 +718,11 @@ def get_balance_kb():
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
     username = message.from_user.username
+    cursor.execute("SELECT 1 FROM banned_users WHERE user_id = ?", (user_id,))
+    if cursor.fetchone():
+        await message.answer("⛔ Вы заблокированы в этом боте. По всем вопросам обращайтесь в поддержку.")
+        logger.info('пытается нажать старт')
+        return
 
     cursor.execute(
         "INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)",
@@ -697,14 +778,13 @@ async def process_support_message(message: types.Message, state: FSMContext):
     logger.info(f"New support ticket from user {user_id}: {support_message}")
 
     try:
-        for i in ADMIN_USER_ID:
-            await bot.send_message(
-                i,
-                f"🆘 Новый запрос в поддержку\n\n"
-                f"👤 Пользователь: @{message.from_user.username or 'нет username'}\n"
-                f"🆔 ID: tg://user?id={user_id} - {user_id}\n"
-                f"📝 Сообщение:\n{support_message}"
-            )
+        await bot.send_message(
+            -1002661486296,
+            f"🆘 Новый запрос в поддержку\n\n"
+            f"👤 Пользователь: @{message.from_user.username or 'нет username'}\n"
+            f"🆔 ID: tg://user?id={user_id} - {user_id}\n"
+            f"📝 Сообщение:\n{support_message}"
+        )
     except Exception as e:
         logger.error(f"Failed to send support message to admin: {e}")
 
@@ -725,8 +805,17 @@ async def main_menu(callback: types.CallbackQuery):
     await callback.answer()
 
 
+async def is_user_banned(user_id: int) -> bool:
+    cursor.execute("SELECT 1 FROM banned_users WHERE user_id = ?", (user_id,))
+    return bool(cursor.fetchone())
+
+
 @dp.callback_query(F.data == "catalog")
 async def catalog(callback: types.CallbackQuery):
+    if await is_user_banned(callback.from_user.id):
+        await callback.answer("⛔ Вы заблокированы", show_alert=True)
+        logger.info("Пытается нажать католог")
+        return
     await callback.message.edit_text(
         "🎮 Выберите жанр игры:",
         reply_markup=get_genres_kb()
@@ -773,6 +862,13 @@ async def game_selected(callback: types.CallbackQuery):
 async def add_to_cart(callback: types.CallbackQuery):
     game_id = int(callback.data.split("_")[3])
     user_id = callback.from_user.id
+
+    cursor.execute("SELECT COUNT(*) FROM cart WHERE user_id = ?", (user_id,))
+    cart_count = cursor.fetchone()[0]
+
+    if cart_count >= 10:
+        await callback.answer("❌ Корзина заполнена (максимум 10 игр)", show_alert=True)
+        return
 
     cursor.execute("SELECT 1 FROM cart WHERE user_id = ? AND game_id = ?", (user_id, game_id))
     if not cursor.fetchone():
@@ -945,6 +1041,9 @@ async def add_balance(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.message(AddBalanceState.amount)
 async def process_balance_amount(message: types.Message, state: FSMContext):
+    if message.text.startswith('/'):
+        await state.clear()
+        return
     try:
         amount = int(message.text)
         if amount <= 0:
@@ -1003,7 +1102,6 @@ async def main():
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
-    await dp.start_polling(bot)
     await dp.start_polling(bot)
 
 
