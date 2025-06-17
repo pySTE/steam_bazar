@@ -289,6 +289,67 @@ class SearchStates(StatesGroup):
     showing_results = State()
 
 
+@dp.message(Command("delete_all_games"))  # удаляем все игры
+async def delete_all_games_command(message: types.Message):
+    if message.from_user.id not in ADMIN_USER_ID:
+        await message.answer("⛔ У вас нет прав для выполнения этой команды")
+        return
+
+    confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, удалить все", callback_data="confirm_delete_all_games"),
+            InlineKeyboardButton(text="❌ Нет, отмена", callback_data="cancel_delete_all_games")
+        ]
+    ])
+
+    await message.answer(
+        "⚠️ Вы уверены, что хотите удалить ВСЕ игры из базы данных?\n\n"
+        "Это действие нельзя отменить! Все данные об играх будут безвозвратно удалены.",
+        reply_markup=confirm_kb
+    )
+
+
+@dp.callback_query(F.data == "confirm_delete_all_games")
+async def confirm_delete_all_games(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMIN_USER_ID:
+        await callback.answer("⛔ У вас нет прав для выполнения этого действия")
+        return
+
+    try:
+        cursor.execute("DELETE FROM games")
+        cursor.execute("DELETE FROM cart")
+        conn.commit()
+
+        await callback.message.edit_text(
+            "✅ Все игры успешно удалены из базы данных",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🔙 В главное меню", callback_data="main_menu")
+            ]])
+        )
+        logger.info("Admin deleted ALL games")
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка при удалении игр: {e}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🔙 В главное меню", callback_data="main_menu")
+            ]])
+        )
+        logger.error(f"Error deleting all games: {e}")
+
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "cancel_delete_all_games")
+async def cancel_delete_all_games(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "❌ Удаление всех игр отменено",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🔙 В главное меню", callback_data="main_menu")
+        ]])
+    )
+    await callback.answer()
+
+
 @dp.message(Command("ban"))  # баним
 async def ban_user(message: types.Message):
     if message.from_user.id not in ADMIN_USER_ID:
