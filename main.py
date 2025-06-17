@@ -284,6 +284,11 @@ class EditGameStates(StatesGroup):
     waiting_for_new_price = State()
 
 
+class SearchStates(StatesGroup):
+    waiting_for_query = State()
+    showing_results = State()
+
+
 @dp.message(Command("ban"))  # баним
 async def ban_user(message: types.Message):
     if message.from_user.id not in ADMIN_USER_ID:
@@ -332,7 +337,7 @@ async def ban_user(message: types.Message):
         logger.error(f"Error banning user: {e}")
 
 
-@dp.message(Command("unban")) #разбан
+@dp.message(Command("unban"))  # разбан
 async def unban_user(message: types.Message):
     if message.from_user.id not in ADMIN_USER_ID:
         await message.answer("⛔ У вас нет прав для выполнения этой команды")
@@ -478,12 +483,13 @@ def get_main_menu_kb():
     builder = InlineKeyboardBuilder()
     builder.add(
         InlineKeyboardButton(text="🕹️ Каталог игр", callback_data="catalog"),
+        InlineKeyboardButton(text="🔍 Поиск игр", callback_data="search_games"),
         InlineKeyboardButton(text="🛒 Корзина", callback_data="cart"),
         InlineKeyboardButton(text="💰 Баланс", callback_data="balance"),
         InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_balance"),
         InlineKeyboardButton(text="🆘 Техподдержка", callback_data="support"),
     )
-    builder.adjust(2, 2, 1)
+    builder.adjust(2, 2, 1, 1)
     return builder.as_markup()
 
 
@@ -521,7 +527,7 @@ def get_games_by_genre_kb(genre):
     return builder.as_markup()
 
 
-def get_game_details_kb(game_id, in_cart=False, is_admin=False):
+def get_game_details_kb(game_id, in_cart=False, is_admin=False, from_search=False):
     builder = InlineKeyboardBuilder()
     if not in_cart:
         builder.add(InlineKeyboardButton(text="🛒 Добавить в корзину", callback_data=f"add_to_cart_{game_id}"))
@@ -532,12 +538,107 @@ def get_game_details_kb(game_id, in_cart=False, is_admin=False):
         builder.add(InlineKeyboardButton(text="✏️ Редактировать цену", callback_data=f"edit_price_{game_id}"))
         builder.add(InlineKeyboardButton(text="🗑️ Удалить игру", callback_data=f"admin_delete_game_{game_id}"))
 
-    builder.add(InlineKeyboardButton(
-        text="🔙 Назад",
-        callback_data=f"genre_{cursor.execute('SELECT genre FROM games WHERE game_id = ?', (game_id,)).fetchone()[0]}"
-    ))
+    if from_search:
+        builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_search_results"))
+    else:
+        builder.add(InlineKeyboardButton(
+            text="🔙 Назад",
+            callback_data=f"genre_{cursor.execute('SELECT genre FROM games WHERE game_id = ?', (game_id,)).fetchone()[0]}"
+        ))
     builder.adjust(1)
     return builder.as_markup()
+
+
+@dp.callback_query(F.data == "search_games")
+async def search_games_start(callback: types.CallbackQuery, state: FSMContext):
+    if await is_user_banned(callback.from_user.id):
+        await callback.answer("⛔ Вы заблокированы", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        "🔍 Введите название игры или часть названия для поиска:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")
+        ]])
+    )
+    await state.set_state(SearchStates.waiting_for_query)
+    await callback.answer()
+
+
+@dp.message(SearchStates.waiting_for_query)
+async def process_search_query(message: types.Message, state: FSMContext):
+    search_query = message.text.lower().strip()
+    if not search_query:
+        await message.answer("❌ Пожалуйста, введите поисковый запрос")
+        return
+
+    cursor.execute("SELECT game_id, title, price FROM games WHERE is_used = 0")
+    all_games = cursor.fetchall()
+
+    matched_games = [
+        game for game in all_games
+        if search_query in game[1].lower() or game[1].lower().startswith(search_query)
+    ]
+
+    if not matched_games:
+        await message.answer(
+            f"❌ По запросу '{search_query}' ничего не найдено",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")
+            ]])
+        )
+        await state.clear()
+        return
+
+    builder = InlineKeyboardBuilder()
+    for game in matched_games:
+        builder.add(InlineKeyboardButton(
+            text=f"{game[1]} - {game[2]}₽",
+            callback_data=f"game_{game[0]}"
+        ))
+    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu"))
+    builder.adjust(1)
+
+    await state.update_data(search_results=matched_games, search_query=search_query)
+
+    await message.answer(
+        f"🔍 Результаты поиска по запросу '{search_query}':",
+        reply_markup=builder.as_markup()
+    )
+    await state.set_state(SearchStates.showing_results)
+
+
+@dp.callback_query(F.data == "back_to_search_results")
+async def back_to_search_results(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    matched_games = data.get('search_results', [])
+    search_query = data.get('search_query', '')
+
+    if not matched_games:
+        await callback.message.edit_text(
+            "🔍 Результаты поиска больше не доступны",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🔙 В главное меню", callback_data="main_menu")
+            ]])
+        )
+        await state.clear()
+        return
+
+    builder = InlineKeyboardBuilder()
+    for game in matched_games:
+        builder.add(InlineKeyboardButton(
+            text=f"{game[1]} - {game[2]}₽",
+            callback_data=f"game_{game[0]}"
+        ))
+    builder.add(InlineKeyboardButton(text="🔙 В главное меню", callback_data="main_menu"))
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        f"🔍 Результаты поиска по запросу '{search_query}':",
+        reply_markup=builder.as_markup()
+    )
+    await state.set_state(SearchStates.showing_results)
+    await callback.answer()
 
 
 @dp.callback_query(F.data.startswith("admin_delete_game_"))
@@ -834,7 +935,7 @@ async def genre_selected(callback: types.CallbackQuery):
 
 
 @dp.callback_query(F.data.startswith("game_"))
-async def game_selected(callback: types.CallbackQuery):
+async def game_selected(callback: types.CallbackQuery, state: FSMContext):
     game_id = int(callback.data.split("_")[1])
     cursor.execute("SELECT title, genre, price FROM games WHERE game_id = ?", (game_id,))
     game = cursor.fetchone()
@@ -850,9 +951,12 @@ async def game_selected(callback: types.CallbackQuery):
 
     is_admin = callback.from_user.id in ADMIN_USER_ID
 
+    current_state = await state.get_state()
+    from_search = current_state == SearchStates.showing_results.state
+
     await callback.message.edit_text(
         text,
-        reply_markup=get_game_details_kb(game_id, in_cart, is_admin),
+        reply_markup=get_game_details_kb(game_id, in_cart, is_admin, from_search),
         parse_mode='HTML'
     )
     await callback.answer()
