@@ -1262,15 +1262,6 @@ async def send_logs(message: types.Message):
         await message.answer(f"❌ Ошибка при отправке логов: {e}")
 
 
-@dp.message(Command('broadcast'))
-async def broadcast(message: types.Message):
-    if message.from_user.id not in ADMIN_USER_ID:
-        logger.warning(f"User {message.from_user.id} tried to access broadcast")
-        await message.answer("⛔ У вас нет прав для выполнения этой команды")
-    cursor.execute('''SELECT user_id FROM users''')
-    conn.commit()
-
-
 class BroadcastState(StatesGroup):
     waiting_for_content = State()
     confirmation = State()
