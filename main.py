@@ -1262,6 +1262,173 @@ async def send_logs(message: types.Message):
         await message.answer(f"❌ Ошибка при отправке логов: {e}")
 
 
+@dp.message(Command('broadcast'))
+async def broadcast(message: types.Message):
+    if message.from_user.id not in ADMIN_USER_ID:
+        logger.warning(f"User {message.from_user.id} tried to access broadcast")
+        await message.answer("⛔ У вас нет прав для выполнения этой команды")
+    cursor.execute('''SELECT user_id FROM users''')
+    conn.commit()
+
+
+class BroadcastState(StatesGroup):
+    waiting_for_content = State()
+    confirmation = State()
+
+
+def broadcast_image_kb():
+    builder = InlineKeyboardBuilder()
+    builder.add(
+        InlineKeyboardButton(text="С фото", callback_data="broadcast_with_image"),
+        InlineKeyboardButton(text="Без фото", callback_data="broadcast_no_image"),
+        InlineKeyboardButton(text="Отмена", callback_data="cancel_broadcast")
+    )
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+async def send_broadcast_message(user_id: int, text: str, photo=None) -> bool:
+    try:
+        if photo:
+            await bot.send_photo(chat_id=user_id, photo=photo, caption=text)
+        else:
+            await bot.send_message(chat_id=user_id, text=text)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send broadcast to {user_id}: {e}")
+        return False
+
+
+@dp.message(Command('broadcast'))
+async def broadcast_command(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_USER_ID:
+        logger.warning(f"User {message.from_user.id} tried to access broadcast")
+        await message.answer("⛔ У вас нет прав для выполнения этой команды")
+        return
+
+    await message.answer(
+        "📢 Начинаем процесс рассылки. С фото или без?",
+        reply_markup=broadcast_image_kb()
+    )
+    await state.set_state(BroadcastState.waiting_for_content)
+
+
+@dp.callback_query(F.data == "broadcast_with_image", BroadcastState.waiting_for_content)
+async def broadcast_with_image(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer(
+        "📷 Отправьте фото с подписью для рассылки\n\n"
+        "Или отправьте /cancel для отмены"
+    )
+    await state.update_data(with_image=True)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "broadcast_no_image", BroadcastState.waiting_for_content)
+async def broadcast_no_image(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer(
+        "✉️ Введите текст для рассылки\n\n"
+        "Или отправьте /cancel для отмены"
+    )
+    await state.update_data(with_image=False)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "cancel_broadcast")
+async def cancel_broadcast(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("❌ Рассылка отменена")
+    await callback.answer()
+
+
+@dp.message(BroadcastState.waiting_for_content, F.photo)
+async def process_broadcast_photo(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    if not data.get('with_image'):
+        await message.answer("❌ Вы выбрали рассылку без фото. Введите текст.")
+        return
+
+    photo_id = message.photo[-1].file_id
+    text = message.caption if message.caption else ""
+
+    await state.update_data(photo_id=photo_id, text=text)
+
+    preview_text = f"📢 Превью рассылки:\n\n{text}" if text else "📢 Превью рассылки (без текста)"
+
+    confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Начать рассылку", callback_data="confirm_broadcast"),
+            InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_broadcast")
+        ]
+    ])
+
+    await message.answer_photo(
+        photo=photo_id,
+        caption=preview_text,
+        reply_markup=confirm_kb
+    )
+    await state.set_state(BroadcastState.confirmation)
+
+
+@dp.message(BroadcastState.waiting_for_content, F.text)
+async def process_broadcast_text(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    if data.get('with_image'):
+        await message.answer("❌ Вы выбрали рассылку с фото. Отправьте фото.")
+        return
+
+    text = message.text
+
+    await state.update_data(text=text)
+
+    preview_text = f"📢 Превью рассылки:\n\n{text}"
+
+    confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Начать рассылку", callback_data="confirm_broadcast"),
+            InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_broadcast")
+        ]
+    ])
+
+    await message.answer(
+        preview_text,
+        reply_markup=confirm_kb
+    )
+    await state.set_state(BroadcastState.confirmation)
+
+
+@dp.callback_query(F.data == "confirm_broadcast", BroadcastState.confirmation)
+async def confirm_broadcast(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    text = data.get('text', '')
+    photo_id = data.get('photo_id')
+
+    status_msg = await callback.message.answer("🔄 Начинаю рассылку...")
+
+    cursor.execute("SELECT user_id FROM users")
+    users = cursor.fetchall()
+    total = len(users)
+    success = 0
+    failed = 0
+
+    for user in users:
+        user_id = user[0]
+        if await send_broadcast_message(user_id, text, photo_id):
+            success += 1
+        else:
+            failed += 1
+        await asyncio.sleep(0.1)
+
+    await status_msg.edit_text(
+        f"📢 Рассылка завершена!\n\n"
+        f"• Всего получателей: {total}\n"
+        f"• Успешно отправлено: {success}\n"
+        f"• Не удалось отправить: {failed}"
+    )
+
+    await state.clear()
+    await callback.answer()
+
+
 async def main():
     asyncio.create_task(check_server_load())
 
