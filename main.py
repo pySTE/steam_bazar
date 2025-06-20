@@ -1429,6 +1429,69 @@ async def confirm_broadcast(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@dp.message(Command("add_balance_to_user"))
+async def add_balance_to_user(message: types.Message):
+    if message.from_user.id not in ADMIN_USER_ID:
+        await message.answer("⛔ У вас нет прав для выполнения этой команды")
+        return
+
+    try:
+        args = message.text.split()
+        if len(args) < 3:
+            await message.answer("ℹ️ Использование: /add_balance_to_user <user_id> <amount>")
+            return
+
+        user_id = int(args[1])
+        amount = int(args[2])
+
+        if amount <= 0:
+            await message.answer("❌ Сумма пополнения должна быть больше 0")
+            return
+
+        cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
+        if not cursor.fetchone():
+            await message.answer(f"❌ Пользователь с ID {user_id} не найден")
+            return
+
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+        conn.commit()
+
+        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+        new_balance = cursor.fetchone()[0]
+
+        await message.answer(
+            f"✅ Баланс пользователя {user_id} успешно пополнен на {amount}₽\n"
+            f"💰 Новый баланс пользователя: {new_balance}₽"
+        )
+
+        try:
+            await bot.send_message(
+                user_id,
+                f"💰 Ваш баланс был пополнен администратором на {amount}₽\n"
+                f"💳 Теперь ваш баланс: {new_balance}₽"
+            )
+        except Exception as e:
+            logger.error(f"Could not send balance notification to {user_id}: {e}")
+
+        logger.info(f"Admin added {amount}₽ to user {user_id}. New balance: {new_balance}₽")
+
+    except ValueError:
+        await message.answer("❌ Неверный формат. Используйте: /add_balance_to_user <user_id> <amount>")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при пополнении баланса: {e}")
+        logger.error(f"Error adding balance to user: {e}")
+
+
+@dp.message(Command("list"))
+async def list_commands(message: types.Message):
+    if message.from_user.id not in ADMIN_USER_ID:
+        await message.answer("⛔ У вас нет прав для выполнения этой команды")
+        return
+    await message.answer(
+        '/logs - логи\n/ban <id> - бан\n/unban <id> - анбан\n/add_game - добавить игру\n/broadcast - рассылка\n/add_balance_to_user <id> <amount> - пополнить баланс'
+    )
+
+
 async def main():
     asyncio.create_task(check_server_load())
 
