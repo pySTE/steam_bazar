@@ -4,6 +4,7 @@ import platform
 import sqlite3
 from datetime import datetime
 
+import aiohttp
 import psutil
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 SUPPORT_USERNAME = "gwjeh"
 ADMIN_USER_ID = [5091594841, 5142322536, 5172170861]
 
-bot = Bot(token="7785027084:AAG7xbLlmuloH5DpYipjW8UZR8_Zq8gUhR8")
+bot = Bot(token="7222464269:AAH1BaNpr3c1D--ThDzXAN8D87Vv8Orn57o")
 dp = Dispatcher()
 HIGH_LOAD_THRESHOLD = 80
 
@@ -626,9 +627,24 @@ async def search_games_start(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+async def is_word_similar(word1: str, word2: str) -> bool:
+    """Check if two words are similar using the comparison API"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            payload = {"word_1": word1.lower(), "word_2": word2.lower()}
+            async with session.post('http://127.0.0.1:8000/', json=payload) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data['is_sim']
+                return False
+    except Exception as e:
+        logger.error(f"Error in word comparison: {e}")
+        return False
+
+
 @dp.message(SearchStates.waiting_for_query)
 async def process_search_query(message: types.Message, state: FSMContext):
-    search_query = message.text.lower().strip()
+    search_query = message.text.strip()
     if not search_query:
         await message.answer("❌ Пожалуйста, введите поисковый запрос")
         return
@@ -636,10 +652,13 @@ async def process_search_query(message: types.Message, state: FSMContext):
     cursor.execute("SELECT game_id, title, price FROM games WHERE is_used = 0")
     all_games = cursor.fetchall()
 
-    matched_games = [
-        game for game in all_games
-        if search_query in game[1].lower() or game[1].lower().startswith(search_query)
-    ]
+    matched_games = []
+    for game in all_games:
+        game_title = game[1].lower()
+        if (search_query.lower() in game_title or
+                game_title.startswith(search_query.lower()) or
+                await is_word_similar(search_query, game_title)):
+            matched_games.append(game)
 
     if not matched_games:
         await message.answer(
