@@ -2,7 +2,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from schemes import ComparisonRequest, ComparisonResult
-from service_comporator.world_comporator import WordComparator
+from service_comporator.app.world_comporator import WordComparator
 
 app = FastAPI()
 
