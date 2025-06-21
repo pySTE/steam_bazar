@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 SUPPORT_USERNAME = "gwjeh"
 ADMIN_USER_ID = [5091594841, 5142322536, 5172170861]
 
-bot = Bot(token="7222464269:AAH1BaNpr3c1D--ThDzXAN8D87Vv8Orn57o")
+bot = Bot(token="7785027084:AAG7xbLlmuloH5DpYipjW8UZR8_Zq8gUhR8")
 dp = Dispatcher()
 HIGH_LOAD_THRESHOLD = 80
 
