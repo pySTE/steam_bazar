@@ -548,7 +548,7 @@ def get_main_menu_kb():
         InlineKeyboardButton(text="🔍 Поиск игр", callback_data="search_games"),
         InlineKeyboardButton(text="🛒 Корзина", callback_data="cart"),
         InlineKeyboardButton(text="💰 Баланс", callback_data="balance"),
-        InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_balance"),
+        #InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_balance"),
         InlineKeyboardButton(text="🆘 Техподдержка", callback_data="support"),
     )
     builder.adjust(2, 2, 1, 1)
