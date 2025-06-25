@@ -888,7 +888,6 @@ def get_cart_game_kb(game_id):
 def get_balance_kb():
     builder = InlineKeyboardBuilder()
     builder.add(
-        InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_balance"),
         InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")
     )
     builder.adjust(1)
