@@ -1205,7 +1205,7 @@ async def show_balance(callback: types.CallbackQuery):
     balance = cursor.fetchone()[0]
 
     await callback.message.edit_text(
-        f"💰 Ваш баланс: {balance}₽\nЗа пополнением баланса писать к @Milana_star513",
+        f"💰 Ваш баланс: {balance}₽\nЗа пополнением баланса писать к @NePavelDurovv",
         reply_markup=get_balance_kb()
     )
     await callback.answer()
